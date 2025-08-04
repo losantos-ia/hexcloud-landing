@@ -28,6 +28,15 @@
         .form-container {
             transition: all 0.5s ease-in-out;
         }
+        .spinner {
+            border-top-color: #ffa600;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white">
@@ -73,12 +82,16 @@
         <div id="thank-you-container" class="form-container mt-12 w-full max-w-2xl hidden bg-gray-800 p-8 rounded-lg border border-gray-700">
              <h2 class="text-2xl font-bold text-white">¡Gracias, <span id="user-name"></span>! Estás en la lista.</h2>
              <p class="text-gray-300 mt-4">Eres parte de un grupo exclusivo que está a punto de cambiar la forma en que se gestionan los talleres. Te contactaremos personalmente en cuanto abramos las primeras plazas para la demo.</p>
-             <div class="mt-6 text-left">
+             <div id="feedback-form" class="mt-6 text-left">
                 <label for="feedback" class="font-semibold text-white">Para ayudarnos a construir la mejor herramienta para ti, ¿te importaría responder a esta única pregunta?</label>
                 <textarea id="feedback" name="feedback" rows="3" placeholder="Ej: Odio hacer inventario, perder tiempo con los presupuestos, no saber qué coches son más rentables..." class="w-full mt-2 px-4 py-3 rounded-md bg-gray-700 border border-gray-600 text-white focus:outline-none focus:ring-2 focus:ring-[#ffa600]"></textarea>
-                <button id="send-feedback" class="mt-4 bg-[#ffa600] hover:bg-amber-500 text-white font-bold py-2 px-5 rounded-md shadow-lg transition duration-300">
-                    Enviar Feedback
+                <button id="send-feedback" class="mt-4 bg-[#ffa600] hover:bg-amber-500 text-white font-bold py-2 px-5 rounded-md shadow-lg transition duration-300 flex items-center justify-center">
+                    <span id="feedback-btn-text">✨ Enviar y Analizar con IA</span>
+                    <div id="feedback-spinner" class="spinner h-5 w-5 ml-3 border-4 hidden"></div>
                 </button>
+             </div>
+             <div id="gemini-response-container" class="hidden mt-6 p-4 bg-gray-700 rounded-lg text-left">
+                <!-- Gemini's empathetic response will be shown here -->
              </div>
         </div>
 
@@ -96,26 +109,67 @@
     </div>
 
 
-    <script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            // Your Firebase config will be injected here in a real environment
+            // For now, this is a placeholder
+            apiKey: "AIza...",
+            authDomain: "your-project-id.firebaseapp.com",
+            projectId: "your-project-id",
+            storageBucket: "your-project-id.appspot.com",
+            messagingSenderId: "...",
+            appId: "..."
+        };
+
+        let app, auth, db;
+        let currentLeadId = null;
+
+        try {
+            app = initializeApp(JSON.parse(__firebase_config || JSON.stringify(firebaseConfig)));
+            auth = getAuth(app);
+            db = getFirestore(app);
+            await signInAnonymously(auth);
+        } catch (error) {
+            console.error("Firebase initialization failed. Using in-memory mode.", error);
+        }
+
         const interestForm = document.getElementById('interest-form');
         const formContainer = document.getElementById('form-container');
         const thankYouContainer = document.getElementById('thank-you-container');
         const userNameSpan = document.getElementById('user-name');
         const sendFeedbackBtn = document.getElementById('send-feedback');
+        const feedbackForm = document.getElementById('feedback-form');
+        const geminiResponseContainer = document.getElementById('gemini-response-container');
+        const feedbackSpinner = document.getElementById('feedback-spinner');
+        const feedbackBtnText = document.getElementById('feedback-btn-text');
 
-        interestForm.addEventListener('submit', function(event) {
+        interestForm.addEventListener('submit', async function(event) {
             event.preventDefault();
             
             const nameInput = document.getElementById('name');
-            const userName = nameInput.value.split(' ')[0]; // Get first name
-            
-            // In a real application, you would send this data to your server/backend.
-            // For example, using fetch() to post to a serverless function.
-            console.log('Form submitted:');
-            console.log('Name:', nameInput.value);
-            console.log('Email:', document.getElementById('email').value);
+            const emailInput = document.getElementById('email');
+            const userName = nameInput.value.split(' ')[0];
 
-            // Hide form and show thank you message
+            if (db) {
+                try {
+                    const docRef = await addDoc(collection(db, "waitlist"), {
+                        name: nameInput.value,
+                        email: emailInput.value,
+                        timestamp: serverTimestamp()
+                    });
+                    currentLeadId = docRef.id;
+                    console.log("Document written with ID: ", currentLeadId);
+                } catch (e) {
+                    console.error("Error adding document: ", e);
+                }
+            } else {
+                 console.log('DB not available. Form data:', { name: nameInput.value, email: emailInput.value });
+            }
+
             userNameSpan.textContent = userName;
             formContainer.style.opacity = '0';
             formContainer.style.transform = 'scale(0.95)';
@@ -132,17 +186,66 @@
             }, 500);
         });
 
-        sendFeedbackBtn.addEventListener('click', function() {
+        sendFeedbackBtn.addEventListener('click', async function() {
             const feedbackText = document.getElementById('feedback').value;
-            // In a real app, you'd send this feedback to your backend.
-            console.log('Feedback received:', feedbackText);
-            
-            // Provide visual feedback to the user
-            sendFeedbackBtn.textContent = '¡Gracias por tu ayuda!';
-            sendFeedbackBtn.disabled = true;
-            sendFeedbackBtn.classList.add('opacity-70');
-        });
+            if (!feedbackText.trim()) return;
 
+            feedbackSpinner.classList.remove('hidden');
+            feedbackBtnText.textContent = 'Analizando...';
+            sendFeedbackBtn.disabled = true;
+
+            const prompt = `
+                Analiza el siguiente 'punto de dolor' de un gerente de taller y clasifícalo en una de estas categorías: [Inventario, Facturación, Clientes, Rentabilidad, Tareas Administrativas, Otro].
+                Además, escribe una frase empática de una línea (máximo 25 palabras) reconociendo su frustración.
+                El texto del usuario es: "${feedbackText}"
+                Responde únicamente con un objeto JSON válido con las claves "category" y "empathy_response".
+            `;
+
+            const geminiApiKey = ""; // This will be provided by the environment
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${geminiApiKey}`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { responseMimeType: "application/json" }
+                    })
+                });
+
+                if (!response.ok) throw new Error('Network response was not ok');
+
+                const result = await response.json();
+                const geminiText = result.candidates[0].content.parts[0].text;
+                const geminiData = JSON.parse(geminiText);
+
+                if (db && currentLeadId) {
+                    const leadDocRef = doc(db, "waitlist", currentLeadId);
+                    await updateDoc(leadDocRef, {
+                        feedback: feedbackText,
+                        feedback_category: geminiData.category || 'Otro',
+                        gemini_response: geminiData.empathy_response || ''
+                    });
+                } else {
+                    console.log('DB not available. Feedback data:', { feedback: feedbackText, category: geminiData.category });
+                }
+
+                geminiResponseContainer.innerHTML = `<p class="font-semibold">🤖 Copiloto IA dice:</p><p class="mt-2 text-gray-300 italic">"${geminiData.empathy_response}"</p>`;
+                feedbackForm.classList.add('hidden');
+                geminiResponseContainer.classList.remove('hidden');
+
+            } catch (error) {
+                console.error("Error with Gemini API or Firestore:", error);
+                feedbackForm.classList.add('hidden');
+                geminiResponseContainer.innerHTML = `<p class="text-amber-400">¡Gracias por tu feedback! Lo hemos guardado correctamente.</p>`;
+                geminiResponseContainer.classList.remove('hidden');
+                 if (db && currentLeadId) {
+                    const leadDocRef = doc(db, "waitlist", currentLeadId);
+                    await updateDoc(leadDocRef, { feedback: feedbackText });
+                }
+            }
+        });
     </script>
 </body>
 </html>
