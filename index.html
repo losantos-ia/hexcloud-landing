@@ -194,31 +194,16 @@
             feedbackBtnText.textContent = 'Analizando...';
             sendFeedbackBtn.disabled = true;
 
-            const prompt = `
-                Analiza el siguiente 'punto de dolor' de un gerente de taller y clasifícalo en una de estas categorías: [Inventario, Facturación, Clientes, Rentabilidad, Tareas Administrativas, Otro].
-                Además, escribe una frase empática de una línea (máximo 25 palabras) reconociendo su frustración.
-                El texto del usuario es: "${feedbackText}"
-                Responde únicamente con un objeto JSON válido con las claves "category" y "empathy_response".
-            `;
-
-            const geminiApiKey = ""; // This will be provided by the environment
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${geminiApiKey}`;
-
             try {
-                const response = await fetch(apiUrl, {
+                const response = await fetch('/api/analyze-feedback', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: { responseMimeType: "application/json" }
-                    })
+                    body: JSON.stringify({ feedback: feedbackText })
                 });
 
                 if (!response.ok) throw new Error('Network response was not ok');
 
-                const result = await response.json();
-                const geminiText = result.candidates[0].content.parts[0].text;
-                const geminiData = JSON.parse(geminiText);
+                const geminiData = await response.json();
 
                 if (db && currentLeadId) {
                     const leadDocRef = doc(db, "waitlist", currentLeadId);
@@ -236,7 +221,7 @@
                 geminiResponseContainer.classList.remove('hidden');
 
             } catch (error) {
-                console.error("Error with Gemini API or Firestore:", error);
+                console.error("Error with feedback analysis or Firestore:", error);
                 feedbackForm.classList.add('hidden');
                 geminiResponseContainer.innerHTML = `<p class="text-amber-400">¡Gracias por tu feedback! Lo hemos guardado correctamente.</p>`;
                 geminiResponseContainer.classList.remove('hidden');
@@ -244,6 +229,10 @@
                     const leadDocRef = doc(db, "waitlist", currentLeadId);
                     await updateDoc(leadDocRef, { feedback: feedbackText });
                 }
+                // Reset button state on error
+                feedbackSpinner.classList.add('hidden');
+                feedbackBtnText.textContent = '✨ Enviar y Analizar con IA';
+                sendFeedbackBtn.disabled = false;
             }
         });
     </script>
